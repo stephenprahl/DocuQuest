@@ -1066,7 +1066,7 @@ async function checkAndUpdateMilestones(userId: string) {
 }
 
 // Start server
-const port = Number(process.env.PORT) || 3001
+const port = Number(process.env.PORT) || 3000
 console.log(`🚀 DocuQuest API server running on port ${port}`)
 
 serve({
