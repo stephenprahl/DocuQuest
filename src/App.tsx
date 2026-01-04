@@ -31,6 +31,9 @@ import {
 } from 'lucide-react';
 import { api } from './api/client';
 import type { Campaign, Level, UserProgress, User as UserType } from './api/client';
+import { EnhancedCampaignCreator } from './components/EnhancedCampaignCreator';
+import { CampaignManagement } from './components/CampaignManagement';
+import { UserProfile } from './components/UserProfile';
 
 // --- Utilities ---
 
@@ -207,6 +210,7 @@ export default function DocuQuest() {
   const [showCampaignHistory, setShowCampaignHistory] = useState(false);
   const [deletedCampaigns, setDeletedCampaigns] = useState<Set<string>>(new Set());
   const [showNewCampaignModal, setShowNewCampaignModal] = useState(false);
+  const [showEnhancedCampaignCreator, setShowEnhancedCampaignCreator] = useState(false);
   const [newCampaignUrl, setNewCampaignUrl] = useState('');
   const [newCampaignPrompt, setNewCampaignPrompt] = useState('');
   const [campaignCreationMode, setCampaignCreationMode] = useState<'url' | 'prompt'>('url');
@@ -290,8 +294,29 @@ export default function DocuQuest() {
 
     // Small delay to show victory state before moving map
     setTimeout(() => {
-      setView('adventure');
-    }, 1500);
+      setBattleState('victory');
+    }, 1000);
+  };
+
+  const handleEnhancedCampaignCreated = (campaign: Campaign) => {
+    // Add to local campaigns state
+    setCampaigns(prev => [...prev, campaign]);
+    
+    // Show success message
+    setNotification({ type: 'success', message: `Campaign "${campaign.title}" has been generated successfully!` });
+    
+    // Navigate to dashboard to see the new campaign
+    setView('dashboard');
+  };
+
+  const handleCampaignUpdate = (updatedCampaign: Campaign) => {
+    setCampaigns(prev => prev.map(c => c.id === updatedCampaign.id ? updatedCampaign : c));
+    setNotification({ type: 'success', message: 'Campaign updated successfully!' });
+  };
+
+  const handleCampaignDelete = (campaignId: string) => {
+    setCampaigns(prev => prev.filter(c => c.id !== campaignId));
+    setNotification({ type: 'success', message: 'Campaign deleted successfully!' });
   };
 
   const checkCodeSolution = () => {
@@ -325,16 +350,6 @@ export default function DocuQuest() {
     } else {
       setBattleState('failure');
       setFeedback("Incorrect. You took 5 damage!");
-    }
-  };
-
-  const resetProgress = () => {
-    if (confirm("Are you sure? This will wipe your journey.")) {
-        setUserXP(0);
-        setUserLevel(1);
-        setActiveCourseId(null);
-        setView('landing');
-        // TODO: Reset progress via API
     }
   };
 
@@ -460,60 +475,6 @@ export default function DocuQuest() {
   };
 
   // --- Views ---
-
-  const ProfileModal = () => (
-    <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowProfile(false)}>
-      <div className="bg-slate-800 w-full max-w-2xl rounded-3xl border border-slate-700 shadow-2xl p-8 transform scale-100 transition-all" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-start mb-8">
-           <div className="flex items-center gap-4">
-             <div className="w-20 h-20 bg-indigo-600 rounded-full flex items-center justify-center border-4 border-slate-700 shadow-xl">
-               <User size={40} className="text-white" />
-             </div>
-             <div>
-               <h2 className="text-3xl font-bold text-white">DevAdventurer</h2>
-               <p className="text-slate-400">Level {userLevel} Code Warrior</p>
-             </div>
-           </div>
-           <Button variant="ghost" onClick={() => setShowProfile(false)}><XCircle size={24} /></Button>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4 mb-8">
-          <div className="bg-slate-900 p-4 rounded-xl text-center border border-slate-700">
-             <div className="text-2xl font-bold text-yellow-400">{userXP}</div>
-             <div className="text-xs text-slate-500 uppercase font-bold tracking-wider">Total XP</div>
-          </div>
-          <div className="bg-slate-900 p-4 rounded-xl text-center border border-slate-700">
-             <div className="text-2xl font-bold text-emerald-400">{completedLevelIds.length}</div>
-             <div className="text-xs text-slate-500 uppercase font-bold tracking-wider">Quests Done</div>
-          </div>
-          <div className="bg-slate-900 p-4 rounded-xl text-center border border-slate-700">
-             <div className="text-2xl font-bold text-purple-400">Top 5%</div>
-             <div className="text-xs text-slate-500 uppercase font-bold tracking-wider">Global Rank</div>
-          </div>
-        </div>
-
-        <h3 className="text-lg font-bold text-white mb-4">Badges</h3>
-        <div className="flex gap-4 mb-8 overflow-x-auto pb-4">
-          <div className="w-16 h-16 rounded-full bg-slate-700 border-2 border-slate-600 flex items-center justify-center grayscale opacity-50 tooltip" title="Locked">
-             <Sword size={24} className="text-slate-500" />
-          </div>
-          <div className="w-16 h-16 rounded-full bg-slate-700 border-2 border-slate-600 flex items-center justify-center grayscale opacity-50">
-             <Zap size={24} className="text-slate-500" />
-          </div>
-          {completedLevelIds.length > 0 && (
-             <div className="w-16 h-16 rounded-full bg-indigo-900 border-2 border-indigo-500 flex items-center justify-center animate-pulse">
-                <Rocket size={24} className="text-indigo-400" />
-             </div>
-          )}
-        </div>
-
-        <div className="border-t border-slate-700 pt-6 flex justify-between items-center">
-           <span className="text-slate-500 text-sm">Member since 2024</span>
-           <Button variant="danger" size="sm" onClick={resetProgress}>Reset Save Data</Button>
-        </div>
-      </div>
-    </div>
-  );
 
   const CampaignHistoryModal = () => {
     const campaignStats = campaigns
@@ -843,17 +804,11 @@ export default function DocuQuest() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge color={campaign.theme}>{Math.round(progress)}%</Badge>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={(e) => {
-                      e?.stopPropagation();
-                      handleDeleteCampaign(campaign.id);
-                    }}
-                    className="text-slate-500 hover:text-rose-400 hover:bg-rose-500/10"
-                  >
-                    <Trash size={16} />
-                  </Button>
+                  <CampaignManagement
+                    campaign={campaign}
+                    onUpdate={handleCampaignUpdate}
+                    onDelete={handleCampaignDelete}
+                  />
                 </div>
               </div>
               
@@ -878,7 +833,7 @@ export default function DocuQuest() {
           );
         })}
         
-        <div className="border-2 border-dashed border-slate-700 rounded-2xl p-6 flex flex-col items-center justify-center text-center hover:bg-slate-800/30 transition-colors cursor-pointer min-h-[300px] group" onClick={() => setShowNewCampaignModal(true)}>
+        <div className="border-2 border-dashed border-slate-700 rounded-2xl p-6 flex flex-col items-center justify-center text-center hover:bg-slate-800/30 transition-colors cursor-pointer min-h-[300px] group" onClick={() => setShowEnhancedCampaignCreator(true)}>
           <div className="bg-slate-800 p-6 rounded-full mb-6 group-hover:scale-110 transition-transform">
             <MapIcon size={32} className="text-slate-500" />
           </div>
@@ -1197,9 +1152,24 @@ export default function DocuQuest() {
     <div className="min-h-screen bg-slate-900 text-slate-200 font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
       <Notification />
       {isProcessing && <LoadingOverlay />}
-      {showProfile && <ProfileModal />}
+      {showProfile && currentUser && (
+        <UserProfile
+          user={currentUser}
+          userProgress={userProgress}
+          campaigns={campaigns}
+          onClose={() => setShowProfile(false)}
+        />
+      )}
       {showCampaignHistory && <CampaignHistoryModal />}
       {showNewCampaignModal && <NewCampaignModal />}
+      {showEnhancedCampaignCreator && (
+        <EnhancedCampaignCreator
+          isOpen={showEnhancedCampaignCreator}
+          onClose={() => setShowEnhancedCampaignCreator(false)}
+          onCampaignCreated={handleEnhancedCampaignCreated}
+          initialMode="url"
+        />
+      )}
       
       {view === 'landing' && <LandingView />}
       {view === 'dashboard' && <DashboardView />}

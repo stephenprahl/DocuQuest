@@ -61,7 +61,7 @@ export class OllamaAgent {
     const includeQuizzes = options.includeQuizzes !== false
     const includeProjects = options.includeProjects !== false
 
-    return `You are an expert educational content designer who creates engaging, gamified learning experiences. 
+    return `You are an expert educational content designer who creates engaging, gamified learning experiences.
 
 Your task is to analyze scraped web content and generate a structured course that teaches the material effectively.
 
@@ -79,23 +79,29 @@ Generate 4-6 levels that progress logically:
 4. Boss Battle/Mastery (1000 XP)
 5. Additional levels as needed
 
-Response Format:
-Return ONLY valid JSON with this exact structure:
+CRITICAL INSTRUCTIONS:
+- You MUST respond with ONLY valid JSON
+- Do NOT include any explanatory text, markdown, or formatting
+- Do NOT use triple backticks or code blocks
+- Ensure all JSON syntax is correct (quotes, commas, brackets)
+- Double-check that all strings are properly quoted
+- Make sure the JSON is valid and can be parsed
+
+Response Format (EXACT):
 {
   "title": "Course Title",
   "description": "Course description",
-  "theme": "blue|green|purple|red|yellow|indigo|pink|orange",
+  "theme": "blue",
   "levels": [
     {
       "title": "Level Title",
-      "type": "lesson|quiz|challenge|boss",
+      "type": "lesson",
       "xp": 100,
       "order": 1,
       "content": {
-        // For lessons: {intro, text, snippet}
-        // For quizzes: {question, options[], correct, explanation}
-        // For challenges: {instruction, hint, initialCode, solutionKey[], successMessage}
-        // For boss: {instruction, hint, initialCode, solutionKey[], successMessage}
+        "intro": "Introduction text",
+        "text": "Main content text",
+        "snippet": "code snippet"
       }
     }
   ]
@@ -106,7 +112,8 @@ Content Guidelines:
 - Use RPG-style language ("quest", "battle", "adventure")
 - Include practical examples when relevant
 - Ensure progressive difficulty
-- Focus on key concepts from the source material`
+- Focus on key concepts from the source material
+- Keep content concise but informative`
   }
 
   private buildUserPrompt(contentPages: any[], options: CourseGenerationOptions): string {
@@ -126,7 +133,8 @@ Content Guidelines:
       prompt += `Special focus on: ${focusAreas}\n`
     }
 
-    prompt += `Create an engaging learning experience that teaches the key concepts from this material.`
+    prompt += `Create an engaging learning experience that teaches the key concepts from this material.\n\n`
+    prompt += `IMPORTANT: Respond with ONLY valid JSON. No markdown, no explanations, no formatting. Just the JSON object.`
     
     return prompt
   }
@@ -160,32 +168,64 @@ Content Guidelines:
 
   private parseCampaignResponse(response: string): GeneratedCampaign {
     try {
-      // Try to extract JSON from the response
-      const jsonMatch = response.match(/\{[\s\S]*\}/)
+      // Try to extract JSON from the response with better error handling
+      // Look for JSON that starts with { and ends with }
+      const jsonMatch = response.match(/\{[\s\S]*?\}/)
       if (!jsonMatch) {
-        throw new Error('No JSON found in response')
+        // If no JSON found, try to extract from markdown code blocks
+        const codeBlockMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/)
+        if (!codeBlockMatch) {
+          throw new Error('No JSON found in response')
+        }
+        const campaignData = JSON.parse(codeBlockMatch[1])
+        return this.validateAndProcessCampaign(campaignData)
       }
 
       const campaignData = JSON.parse(jsonMatch[0])
-      
-      // Validate required fields
-      if (!campaignData.title || !campaignData.description || !campaignData.levels) {
-        throw new Error('Invalid campaign structure')
-      }
-
-      // Ensure levels have required fields and proper order
-      campaignData.levels = campaignData.levels.map((level: any, index: number) => ({
-        ...level,
-        order: index + 1,
-        xp: level.xp || this.getDefaultXp(level.type),
-        content: this.sanitizeContent(level.content, level.type)
-      }))
-
-      return campaignData
+      return this.validateAndProcessCampaign(campaignData)
     } catch (error) {
       console.error('Error parsing campaign response:', error)
+      console.error('Response content:', response.substring(0, 500)) // Log first 500 chars for debugging
+      
+      // Try to extract JSON with a more permissive approach
+      try {
+        // Look for any JSON-like structure
+        const jsonStart = response.indexOf('{')
+        const jsonEnd = response.lastIndexOf('}')
+        
+        if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+          const jsonStr = response.substring(jsonStart, jsonEnd + 1)
+          const campaignData = JSON.parse(jsonStr)
+          return this.validateAndProcessCampaign(campaignData)
+        }
+      } catch (fallbackError) {
+        console.error('Fallback parsing also failed:', fallbackError)
+      }
+      
       throw new Error('Failed to parse generated campaign')
     }
+  }
+
+  private validateAndProcessCampaign(campaignData: any): GeneratedCampaign {
+    // Validate required fields
+    if (!campaignData.title || !campaignData.description || !campaignData.levels) {
+      throw new Error('Invalid campaign structure')
+    }
+
+    // Ensure levels is an array
+    if (!Array.isArray(campaignData.levels)) {
+      throw new Error('Levels must be an array')
+    }
+
+    // Ensure levels have required fields and proper order
+    campaignData.levels = campaignData.levels.map((level: any, index: number) => ({
+      ...level,
+      order: index + 1,
+      xp: level.xp || this.getDefaultXp(level.type),
+      content: this.sanitizeContent(level.content, level.type)
+    }))
+
+    return campaignData
   }
 
   private getDefaultXp(levelType: string): number {
