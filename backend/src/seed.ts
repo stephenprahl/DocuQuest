@@ -99,6 +99,164 @@ const mockCampaigns = [
   }
 ]
 
+const mockBadges = [
+  {
+    name: "First Steps",
+    description: "Complete your first quest",
+    icon: "🎯",
+    color: "green",
+    category: "achievement" as const,
+    requirement: { type: "first_quest" },
+    xpReward: 50,
+    isSecret: false
+  },
+  {
+    name: "Level Up!",
+    description: "Reach level 10",
+    icon: "⬆️",
+    color: "blue",
+    category: "achievement" as const,
+    requirement: { type: "level_10" },
+    xpReward: 100,
+    isSecret: false
+  },
+  {
+    name: "XP Collector",
+    description: "Earn 1000 total XP",
+    icon: "💎",
+    color: "purple",
+    category: "achievement" as const,
+    requirement: { type: "xp_1000" },
+    xpReward: 200,
+    isSecret: false
+  },
+  {
+    name: "Quest Master",
+    description: "Complete 10 quests",
+    icon: "⚔️",
+    color: "red",
+    category: "milestone" as const,
+    requirement: { type: "quests_10" },
+    xpReward: 150,
+    isSecret: false
+  },
+  {
+    name: "Seasoned Adventurer",
+    description: "Complete 50 quests",
+    icon: "🛡️",
+    color: "orange",
+    category: "milestone" as const,
+    requirement: { type: "quests_50" },
+    xpReward: 500,
+    isSecret: false
+  },
+  {
+    name: "Legendary Hero",
+    description: "Complete 100 quests",
+    icon: "👑",
+    color: "yellow",
+    category: "milestone" as const,
+    requirement: { type: "quests_100" },
+    xpReward: 1000,
+    isSecret: false
+  },
+  {
+    name: "Code Master",
+    description: "Complete 25 coding challenges",
+    icon: "💻",
+    color: "indigo",
+    category: "skill" as const,
+    requirement: { type: "code_master" },
+    xpReward: 300,
+    isSecret: false
+  },
+  {
+    name: "Secret Explorer",
+    description: "Discover a hidden achievement",
+    icon: "🔍",
+    color: "pink",
+    category: "special" as const,
+    requirement: { type: "secret_discovery" },
+    xpReward: 250,
+    isSecret: true
+  }
+]
+
+const mockMilestones = [
+  {
+    title: "Novice Level",
+    description: "Reach level 5",
+    targetValue: 5,
+    category: "level" as const,
+    icon: "🌟",
+    color: "green",
+    rewards: { xp: 100 }
+  },
+  {
+    title: "Adept Level", 
+    description: "Reach level 15",
+    targetValue: 15,
+    category: "level" as const,
+    icon: "⚡",
+    color: "blue",
+    rewards: { xp: 300 }
+  },
+  {
+    title: "Master Level",
+    description: "Reach level 30",
+    targetValue: 30,
+    category: "level" as const,
+    icon: "🔥",
+    color: "purple",
+    rewards: { xp: 1000 }
+  },
+  {
+    title: "XP Beginner",
+    description: "Earn 500 XP",
+    targetValue: 500,
+    category: "xp" as const,
+    icon: "💰",
+    color: "yellow",
+    rewards: { xp: 50 }
+  },
+  {
+    title: "XP Expert",
+    description: "Earn 2500 XP",
+    targetValue: 2500,
+    category: "xp" as const,
+    icon: "💎",
+    color: "cyan",
+    rewards: { xp: 200 }
+  },
+  {
+    title: "Campaign Explorer",
+    description: "Complete 3 different campaigns",
+    targetValue: 3,
+    category: "campaigns" as const,
+    icon: "🗺️",
+    color: "orange",
+    rewards: { xp: 150 }
+  },
+  {
+    title: "Quest Hunter",
+    description: "Complete 25 quests",
+    targetValue: 25,
+    category: "quests" as const,
+    icon: "🎯",
+    color: "red",
+    rewards: { xp: 250 }
+  },
+  {
+    title: "Quest Legend",
+    description: "Complete 75 quests", 
+    targetValue: 75,
+    category: "quests" as const,
+    icon: "🏆",
+    color: "gold",
+    rewards: { xp: 750 }
+  }
+]
+
 async function seed() {
   console.log('🌱 Starting database seed...')
 
@@ -134,6 +292,28 @@ async function seed() {
     })
 
     console.log(`✅ Created campaign: ${campaign.title} with ${campaign.levels.length} levels`)
+  }
+
+  // Create badges
+  for (const badgeData of mockBadges) {
+    const badge = await prisma.badge.create({
+      data: {
+        ...badgeData,
+        requirement: JSON.stringify(badgeData.requirement)
+      }
+    })
+    console.log(`✅ Created badge: ${badge.name}`)
+  }
+
+  // Create milestones
+  for (const milestoneData of mockMilestones) {
+    const milestone = await prisma.milestone.create({
+      data: {
+        ...milestoneData,
+        rewards: JSON.stringify(milestoneData.rewards)
+      }
+    })
+    console.log(`✅ Created milestone: ${milestone.title}`)
   }
 
   console.log('🎉 Database seeded successfully!')

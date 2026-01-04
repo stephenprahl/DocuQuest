@@ -5,6 +5,7 @@ import { serve } from '@hono/node-server'
 import { prisma } from './lib/prisma'
 import { scrapeWebsite } from './lib/scraper'
 import { OllamaAgent } from './lib/ollama-agent'
+import { CourseValidator } from './lib/course-validator'
 
 const app = new Hono()
 
@@ -57,6 +58,60 @@ app.post('/api/scrape', async (c) => {
       error: 'Failed to scrape website',
       details: error instanceof Error ? error.message : 'Unknown error'
     }, 500)
+  }
+})
+
+// Validate campaign endpoint
+app.post('/api/campaigns/validate', async (c) => {
+  try {
+    const body = await c.req.json()
+    const { campaign } = body
+    
+    if (!campaign) {
+      return c.json({ error: 'Campaign data is required' }, 400)
+    }
+
+    const validator = new CourseValidator()
+    const validation = validator.validateCampaign(campaign)
+    
+    return c.json(validation)
+  } catch (error) {
+    console.error('Error validating campaign:', error)
+    return c.json({ 
+      error: 'Failed to validate campaign',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, 500)
+  }
+})
+
+// Get campaigns with quality filters
+app.get('/api/campaigns/quality', async (c) => {
+  try {
+    const minScore = parseInt(c.req.query('minScore') || '0')
+    const validated = c.req.query('validated') === 'true'
+    
+    const campaigns = await prisma.campaign.findMany({
+      where: {
+        qualityScore: minScore > 0 ? { gte: minScore } : undefined,
+        isValidated: validated ? true : undefined
+      },
+      include: {
+        levels: {
+          orderBy: { order: 'asc' }
+        },
+        creator: {
+          select: { id: true, username: true }
+        }
+      },
+      orderBy: {
+        qualityScore: 'desc'
+      }
+    })
+    
+    return c.json(campaigns)
+  } catch (error) {
+    console.error('Error fetching quality campaigns:', error)
+    return c.json({ error: 'Failed to fetch campaigns' }, 500)
   }
 })
 
@@ -259,6 +314,9 @@ async function generateCampaignFromScraping(
       theme: generatedCourse.theme,
       sourceUrl,
       createdBy,
+      qualityScore: generatedCourse.validation?.score.overall,
+      isValidated: generatedCourse.validation?.passed || false,
+      validationData: JSON.stringify(generatedCourse.validation),
       levels: {
         create: generatedCourse.levels.map(level => ({
           title: level.title,
@@ -325,6 +383,9 @@ async function generateCampaignFromPromptWithOllama(
       theme: generatedCourse.theme,
       sourceUrl: null,
       createdBy,
+      qualityScore: generatedCourse.validation?.score.overall,
+      isValidated: generatedCourse.validation?.passed || false,
+      validationData: JSON.stringify(generatedCourse.validation),
       levels: {
         create: generatedCourse.levels.map(level => ({
           title: level.title,
@@ -708,6 +769,12 @@ app.post('/api/users/:userId/progress', async (c) => {
       }
     })
     
+    // Check for badge awards and milestone completion
+    if (completed) {
+      await checkAndAwardBadges(userId, levelId)
+      await checkAndUpdateMilestones(userId)
+    }
+    
     return c.json(progress)
   } catch (error) {
     console.error('Error updating progress:', error)
@@ -726,6 +793,277 @@ app.post('/api/users/:userId/progress', async (c) => {
     return c.json({ error: 'Failed to update progress' }, 500)
   }
 })
+
+// Badge endpoints
+app.get('/api/badges', async (c) => {
+  const badges = await prisma.badge.findMany({
+    orderBy: { category: 'asc' }
+  })
+  return c.json(badges)
+})
+
+app.get('/api/users/:userId/badges', async (c) => {
+  const userId = c.req.param('userId')
+  const userBadges = await prisma.userBadge.findMany({
+    where: { userId },
+    include: {
+      badge: true
+    },
+    orderBy: { earnedAt: 'desc' }
+  })
+  return c.json(userBadges)
+})
+
+app.post('/api/badges', async (c) => {
+  try {
+    const body = await c.req.json()
+    const { name, description, icon, color, category, requirement, xpReward, isSecret } = body
+    
+    const badge = await prisma.badge.create({
+      data: {
+        name,
+        description,
+        icon,
+        color,
+        category,
+        requirement: JSON.stringify(requirement),
+        xpReward: xpReward || 0,
+        isSecret: isSecret || false
+      }
+    })
+    
+    return c.json(badge, 201)
+  } catch (error) {
+    console.error('Error creating badge:', error)
+    return c.json({ error: 'Failed to create badge' }, 500)
+  }
+})
+
+// Milestone endpoints
+app.get('/api/milestones', async (c) => {
+  const milestones = await prisma.milestone.findMany({
+    orderBy: { targetValue: 'asc' }
+  })
+  return c.json(milestones)
+})
+
+app.get('/api/users/:userId/milestones', async (c) => {
+  const userId = c.req.param('userId')
+  const userMilestones = await prisma.userMilestone.findMany({
+    where: { userId },
+    include: {
+      milestone: true
+    },
+    orderBy: { completedAt: 'desc' }
+  })
+  return c.json(userMilestones)
+})
+
+app.post('/api/milestones', async (c) => {
+  try {
+    const body = await c.req.json()
+    const { title, description, targetValue, category, icon, color, rewards } = body
+    
+    const milestone = await prisma.milestone.create({
+      data: {
+        title,
+        description,
+        targetValue,
+        category,
+        icon,
+        color,
+        rewards: JSON.stringify(rewards || {})
+      }
+    })
+    
+    return c.json(milestone, 201)
+  } catch (error) {
+    console.error('Error creating milestone:', error)
+    return c.json({ error: 'Failed to create milestone' }, 500)
+  }
+})
+
+// Helper functions for badge and milestone logic
+async function checkAndAwardBadges(userId: string, levelId: string) {
+  try {
+    // Get user's current stats
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        userProgress: {
+          where: { completed: true }
+        },
+        userBadges: {
+          include: { badge: true }
+        }
+      }
+    })
+    
+    if (!user) return
+    
+    const completedLevels = user.userProgress.length
+    const totalXP = user.xp
+    const currentLevel = user.level
+    
+    // Get all available badges
+    const allBadges = await prisma.badge.findMany()
+    const earnedBadgeIds = user.userBadges.map(ub => ub.badgeId)
+    
+    // Check each badge
+    for (const badge of allBadges) {
+      if (earnedBadgeIds.includes(badge.id)) continue // Already earned
+      
+      let shouldAward = false
+      const requirement = JSON.parse(badge.requirement)
+      
+      // Check different badge types
+      switch (badge.category) {
+        case 'achievement':
+          if (requirement.type === 'first_quest' && completedLevels === 1) {
+            shouldAward = true
+          } else if (requirement.type === 'level_10' && currentLevel >= 10) {
+            shouldAward = true
+          } else if (requirement.type === 'xp_1000' && totalXP >= 1000) {
+            shouldAward = true
+          }
+          break
+          
+        case 'milestone':
+          if (requirement.type === 'quests_10' && completedLevels >= 10) {
+            shouldAward = true
+          } else if (requirement.type === 'quests_50' && completedLevels >= 50) {
+            shouldAward = true
+          } else if (requirement.type === 'quests_100' && completedLevels >= 100) {
+            shouldAward = true
+          }
+          break
+          
+        case 'skill':
+          // Check for specific skill-based achievements
+          if (requirement.type === 'code_master' && completedLevels >= 25) {
+            shouldAward = true
+          }
+          break
+      }
+      
+      if (shouldAward) {
+        // Award the badge
+        await prisma.userBadge.create({
+          data: {
+            userId,
+            badgeId: badge.id,
+            progress: 1.0
+          }
+        })
+        
+        // Award XP if badge has XP reward
+        if (badge.xpReward > 0) {
+          await prisma.user.update({
+            where: { id: userId },
+            data: { xp: { increment: badge.xpReward } }
+          })
+        }
+        
+        console.log(`Awarded badge "${badge.name}" to user ${userId}`)
+      }
+    }
+  } catch (error) {
+    console.error('Error checking badges:', error)
+  }
+}
+
+async function checkAndUpdateMilestones(userId: string) {
+  try {
+    // Get user's current stats
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        userProgress: {
+          where: { completed: true }
+        },
+        userMilestones: {
+          include: { milestone: true }
+        }
+      }
+    })
+    
+    if (!user) return
+    
+    const completedLevels = user.userProgress.length
+    const totalXP = user.xp
+    const currentLevel = user.level
+    const completedMilestoneIds = user.userMilestones.map((um: any) => um.milestoneId)
+    
+    // Get all milestones
+    const allMilestones = await prisma.milestone.findMany()
+    
+    // Check each milestone
+    for (const milestone of allMilestones) {
+      if (completedMilestoneIds.includes(milestone.id)) continue // Already completed
+      
+      let currentValue = 0
+      let isCompleted = false
+      
+      switch (milestone.category) {
+        case 'level':
+          currentValue = currentLevel
+          isCompleted = currentLevel >= milestone.targetValue
+          break
+        case 'xp':
+          currentValue = totalXP
+          isCompleted = totalXP >= milestone.targetValue
+          break
+        case 'quests':
+          currentValue = completedLevels
+          isCompleted = completedLevels >= milestone.targetValue
+          break
+        case 'campaigns':
+          // Count unique campaigns completed
+          const uniqueCampaigns = new Set(user.userProgress.map(p => p.campaignId))
+          currentValue = uniqueCampaigns.size
+          isCompleted = uniqueCampaigns.size >= milestone.targetValue
+          break
+      }
+      
+      // Update or create milestone progress
+      await prisma.userMilestone.upsert({
+        where: {
+          userId_milestoneId: {
+            userId,
+            milestoneId: milestone.id
+          }
+        },
+        update: {
+          currentValue,
+          completed: isCompleted,
+          completedAt: isCompleted ? new Date() : null
+        },
+        create: {
+          userId,
+          milestoneId: milestone.id,
+          currentValue,
+          completed: isCompleted,
+          completedAt: isCompleted ? new Date() : null
+        }
+      })
+      
+      if (isCompleted && !completedMilestoneIds.includes(milestone.id)) {
+        // Award milestone rewards
+        const rewards = JSON.parse(milestone.rewards)
+        if (rewards.xp) {
+          await prisma.user.update({
+            where: { id: userId },
+            data: { xp: { increment: rewards.xp } }
+          })
+        }
+        
+        console.log(`Completed milestone "${milestone.title}" for user ${userId}`)
+      }
+    }
+  } catch (error) {
+    console.error('Error checking milestones:', error)
+  }
+}
 
 // Start server
 const port = Number(process.env.PORT) || 3001

@@ -6,7 +6,6 @@ import {
   Trophy, 
   Heart, 
   ChevronRight, 
-  Terminal, 
   BookOpen, 
   CheckCircle, 
   XCircle,
@@ -18,22 +17,26 @@ import {
   Star,
   User,
   Lock,
-  Play,
-  Save,
-  Trash,
-  History,
-  Clock,
-  Target,
   Award,
   Home,
   Globe,
-  Sparkles
+  Sparkles,
+  Trash,
+  Target,
+  Clock,
+  Play,
+  Search,
+  History
 } from 'lucide-react';
 import { api } from './api/client';
 import type { Campaign, Level, UserProgress, User as UserType } from './api/client';
 import { EnhancedCampaignCreator } from './components/EnhancedCampaignCreator';
 import { CampaignManagement } from './components/CampaignManagement';
 import { UserProfile } from './components/UserProfile';
+import { EnhancedCodeEditor } from './components/EnhancedCodeEditor';
+import { BadgesAndMilestones } from './components/BadgesAndMilestones';
+import { AchievementNotifications, useAchievementNotifications } from './components/AchievementNotifications';
+import { codeExecutor } from './lib/codeExecutor';
 
 // --- Utilities ---
 
@@ -123,41 +126,6 @@ const Badge = ({ children, color = 'indigo' }: BadgeProps) => (
   </span>
 );
 
-interface LineNumberedEditorProps {
-  value: string;
-  onChange: (value: string) => void;
-}
-
-const LineNumberedEditor = ({ value, onChange }: LineNumberedEditorProps) => {
-  const lines = value.split('\n').length;
-  
-  return (
-    <div className="flex flex-1 overflow-hidden font-mono text-sm bg-slate-950 text-slate-300 relative group">
-      {/* Line Numbers */}
-      <div className="bg-slate-900 text-slate-600 p-4 text-right select-none border-r border-slate-800 flex flex-col gap-[2px] min-w-[3rem]">
-        {Array.from({ length: Math.max(lines, 10) }).map((_, i) => (
-          <div key={i} className="leading-6">{i + 1}</div>
-        ))}
-      </div>
-      
-      {/* Editor Area */}
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="flex-1 bg-transparent p-4 resize-none focus:outline-none leading-6 text-slate-200 z-10"
-        spellCheck="false"
-        autoCapitalize="off"
-        autoComplete="off"
-      />
-      
-      {/* Syntax Highlighting Fake Layer (Simple Keyword Matching) */}
-      <div className="absolute top-0 left-[3rem] right-0 bottom-0 p-4 pointer-events-none text-transparent leading-6 whitespace-pre-wrap overflow-hidden z-0 opacity-50">
-         {/* This is a visual trick; real syntax highlighting requires a library like Prism or Monaco */}
-         {value}
-      </div>
-    </div>
-  );
-};
 
 // --- Main Application ---
 
@@ -205,6 +173,7 @@ export default function DocuQuest() {
   const [battleState, setBattleState] = useState('intro');
   const [userCode, setUserCode] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [failureTitle, setFailureTitle] = useState<string>('Challenge Failed');
   const [isProcessing, setIsProcessing] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showCampaignHistory, setShowCampaignHistory] = useState(false);
@@ -219,6 +188,9 @@ export default function DocuQuest() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [userProgress, setUserProgress] = useState<UserProgress[]>([]);
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
+
+  // Achievement notifications
+  const { notifications: achievementNotifications, dismissNotification } = useAchievementNotifications();
 
   const activeCourse = activeCourseId ? campaigns.find(c => c.id === activeCourseId) : undefined;
   const currentLevelData = activeCourse?.levels.find((l: Level) => l.id === currentLevelId);
@@ -264,6 +236,7 @@ export default function DocuQuest() {
   const handleEnterLevel = (levelId: string) => {
     setCurrentLevelId(levelId);
     setBattleState('intro');
+    setFailureTitle('Challenge Failed');
     
     // Check if we have a saved draft for this level (advanced feature placeholder)
     const level = activeCourse?.levels.find(l => l.id === levelId);
@@ -319,7 +292,7 @@ export default function DocuQuest() {
     setNotification({ type: 'success', message: 'Campaign deleted successfully!' });
   };
 
-  const checkCodeSolution = () => {
+  const checkCodeSolution = async () => {
     if (!currentLevelData) return;
     
     const content = parseLevelContent(currentLevelData.content);
@@ -327,15 +300,37 @@ export default function DocuQuest() {
       ? content.solutionKey 
       : content.solutionKey ? [content.solutionKey] : [];
       
-    // Check if ALL keys are present
-    const allKeysPresent = keys.every((key: string | undefined) => key ? userCode.includes(key) : false);
-
-    if (allKeysPresent) {
-      setBattleState('success');
-      setFeedback(content.successMessage || "Compilation Successful! Tests Passed.");
-    } else {
+    // Execute the code and check for solution keys
+    try {
+      const executionResult = await codeExecutor.executeCode(userCode);
+      
+      if (executionResult.success) {
+        // Check if ALL keys are present in the code
+        const allKeysPresent = keys.every((key: string | undefined) => key ? userCode.includes(key) : false);
+        
+        if (allKeysPresent) {
+          setBattleState('success');
+          setFeedback(content.successMessage || "Compilation Successful! Tests Passed.");
+        } else {
+          setBattleState('failure');
+          setFailureTitle('Solution Incomplete');
+          setFeedback("You are missing key concepts. Check the hints!");
+        }
+      } else {
+        setBattleState('failure');
+        const rawError = executionResult.error || '';
+        const lowerError = rawError.toLowerCase();
+        if (lowerError.includes('syntax') || lowerError.includes('unexpected')) {
+          setFailureTitle('Syntax Error');
+        } else {
+          setFailureTitle('Runtime Error');
+        }
+        setFeedback(executionResult.error || "Code execution failed. Check your syntax!");
+      }
+    } catch (error) {
       setBattleState('failure');
-      setFeedback("Syntax Error: You are missing key concepts. Check the hints!");
+      setFailureTitle('Execution Error');
+      setFeedback("An error occurred while running your code.");
     }
   };
 
@@ -349,6 +344,7 @@ export default function DocuQuest() {
       setFeedback("Correct! Critical hit on the bug!");
     } else {
       setBattleState('failure');
+      setFailureTitle('Incorrect Answer');
       setFeedback("Incorrect. You took 5 damage!");
     }
   };
@@ -711,7 +707,7 @@ export default function DocuQuest() {
 
       <div className="w-full max-w-xl bg-slate-800 p-2 rounded-2xl border border-slate-700 shadow-2xl flex flex-col md:flex-row gap-2 mb-8">
         <div className="flex-1 relative">
-           <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500"><SearchIcon /></div>
+           <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500"><Search size={20} /></div>
            <input 
              type="text" 
              value={homePagePrompt}
@@ -841,6 +837,13 @@ export default function DocuQuest() {
           <p className="text-slate-400 text-sm max-w-xs mx-auto">Paste a new documentation URL to generate a procedurally tailored campaign.</p>
         </div>
       </div>
+
+      {/* Badges and Milestones Section */}
+      {currentUser && (
+        <div className="mt-12">
+          <BadgesAndMilestones userId={currentUser.id} />
+        </div>
+      )}
     </div>
   );
 
@@ -1065,9 +1068,16 @@ export default function DocuQuest() {
                         <div className="w-20 h-20 bg-rose-500 rounded-full flex items-center justify-center mb-4 shadow-lg shadow-rose-500/50">
                           <XCircle size={40} className="text-white" />
                         </div>
-                        <h2 className="text-2xl font-bold text-white mb-2">Compilation Failed</h2>
+                        <h2 className="text-2xl font-bold text-white mb-2">{failureTitle}</h2>
                         <p className="text-slate-300 mb-6">{feedback}</p>
-                        <Button variant="secondary" onClick={() => setBattleState('intro')}>
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            setBattleState('intro');
+                            setFeedback(null);
+                            setFailureTitle('Challenge Failed');
+                          }}
+                        >
                           Try Again
                         </Button>
                       </div>
@@ -1079,13 +1089,24 @@ export default function DocuQuest() {
             {/* Workspace Content */}
             {isCodeChallenge && (
               <div className="flex-1 flex flex-col h-full">
-                <div className="bg-slate-900 text-slate-400 text-xs py-2 px-4 flex justify-between select-none border-b border-slate-800">
-                  <span className="flex items-center gap-2"><Terminal size={12}/> script.js</span>
-                  <span className="flex items-center gap-1 text-emerald-500"><Save size={12}/> Saved</span>
-                </div>
-                <LineNumberedEditor 
-                  value={userCode} 
-                  onChange={setUserCode} 
+                <EnhancedCodeEditor
+                  value={userCode}
+                  onChange={setUserCode}
+                  language="javascript"
+                  theme="dark"
+                  onRun={async (code) => {
+                    const result = await codeExecutor.executeCode(code);
+                    return {
+                      success: result.success,
+                      output: result.consoleOutput?.join('\n') || result.output,
+                      error: result.error
+                    };
+                  }}
+                  onValidate={(code) => codeExecutor.validateCode(code)}
+                  hints={codeExecutor.generateHints(userCode, content.solutionKey || [])}
+                  initialCode={content.initialCode || ''}
+                  solutionCode={content.solutionCode || ''}
+                  placeholder="// Write your code here..."
                 />
               </div>
             )}
@@ -1129,10 +1150,6 @@ export default function DocuQuest() {
     );
   };
 
-  // Helper Icon Component
-  const SearchIcon = () => (
-     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-  );
 
   const LoadingOverlay = () => (
     <div className="fixed inset-0 z-[60] bg-slate-900 flex flex-col items-center justify-center">
@@ -1151,6 +1168,10 @@ export default function DocuQuest() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-200 font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
       <Notification />
+      <AchievementNotifications 
+        notifications={achievementNotifications}
+        onDismiss={dismissNotification}
+      />
       {isProcessing && <LoadingOverlay />}
       {showProfile && currentUser && (
         <UserProfile

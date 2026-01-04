@@ -51,6 +51,50 @@ export interface UserProgress {
   campaign: Campaign
 }
 
+export interface Badge {
+  id: string
+  name: string
+  description: string
+  icon: string
+  color: string
+  category: 'achievement' | 'milestone' | 'skill' | 'special'
+  requirement: string // JSON string
+  xpReward: number
+  isSecret: boolean
+  createdAt: string
+}
+
+export interface UserBadge {
+  id: string
+  userId: string
+  badgeId: string
+  earnedAt: string
+  progress: number
+  badge: Badge
+}
+
+export interface Milestone {
+  id: string
+  title: string
+  description: string
+  targetValue: number
+  category: 'level' | 'xp' | 'campaigns' | 'quests' | 'streak'
+  icon: string
+  color: string
+  rewards: string // JSON string
+  createdAt: string
+}
+
+export interface UserMilestone {
+  id: string
+  userId: string
+  milestoneId: string
+  completed: boolean
+  completedAt?: string
+  currentValue: number
+  milestone: Milestone
+}
+
 export interface ScrapingOptions {
   maxDepth?: number
   maxPages?: number
@@ -198,6 +242,55 @@ class ApiClient {
   // Ollama
   async getOllamaStatus(): Promise<OllamaStatus> {
     return this.request<OllamaStatus>('/api/ollama/status')
+  }
+
+  // Badges
+  async getBadges(): Promise<Badge[]> {
+    return this.request<Badge[]>('/api/badges')
+  }
+
+  async getUserBadges(userId: string): Promise<UserBadge[]> {
+    return this.request<UserBadge[]>(`/api/users/${userId}/badges`)
+  }
+
+  async createBadge(data: {
+    name: string
+    description: string
+    icon: string
+    color: string
+    category: 'achievement' | 'milestone' | 'skill' | 'special'
+    requirement: any
+    xpReward?: number
+    isSecret?: boolean
+  }): Promise<Badge> {
+    return this.request<Badge>('/api/badges', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  // Milestones
+  async getMilestones(): Promise<Milestone[]> {
+    return this.request<Milestone[]>('/api/milestones')
+  }
+
+  async getUserMilestones(userId: string): Promise<UserMilestone[]> {
+    return this.request<UserMilestone[]>(`/api/users/${userId}/milestones`)
+  }
+
+  async createMilestone(data: {
+    title: string
+    description: string
+    targetValue: number
+    category: 'level' | 'xp' | 'campaigns' | 'quests' | 'streak'
+    icon: string
+    color: string
+    rewards?: any
+  }): Promise<Milestone> {
+    return this.request<Milestone>('/api/milestones', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
   }
 }
 

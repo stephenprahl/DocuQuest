@@ -1,4 +1,5 @@
 import { ScrapedPage } from './scraper'
+import { CourseValidator, ValidationResult } from './course-validator'
 
 export interface CourseGenerationOptions {
   model?: string
@@ -27,13 +28,15 @@ export interface GeneratedCampaign {
 export class OllamaAgent {
   private baseUrl: string
   private model: string
+  private validator: CourseValidator
 
   constructor(baseUrl: string = 'http://localhost:11434', model: string = 'gpt-oss:120b-cloud') {
     this.baseUrl = baseUrl
     this.model = model
+    this.validator = new CourseValidator()
   }
 
-  async generateCourse(scrapedPages: ScrapedPage[], options: CourseGenerationOptions = {}): Promise<GeneratedCampaign> {
+  async generateCourse(scrapedPages: ScrapedPage[], options: CourseGenerationOptions = {}): Promise<GeneratedCampaign & { validation: ValidationResult }> {
     const allContent = scrapedPages.map(page => ({
       title: page.title,
       url: page.url,
@@ -48,11 +51,68 @@ export class OllamaAgent {
       const response = await this.callOllama(systemPrompt, userPrompt)
       const campaignData = this.parseCampaignResponse(response)
       
-      return campaignData
+      // Validate the generated campaign
+      const validation = this.validator.validateCampaign(campaignData, scrapedPages)
+      
+      // If validation fails, try to improve the campaign
+      if (!validation.passed && validation.score.overall < 60) {
+        console.warn('Generated campaign failed validation, attempting to improve...')
+        const improvedCampaign = await this.improveCampaign(campaignData, validation, scrapedPages, options)
+        const improvedValidation = this.validator.validateCampaign(improvedCampaign, scrapedPages)
+        
+        return {
+          ...improvedCampaign,
+          validation: improvedValidation
+        }
+      }
+      
+      return {
+        ...campaignData,
+        validation
+      }
     } catch (error) {
       console.error('Error generating course:', error)
       throw new Error('Failed to generate course with Ollama')
     }
+  }
+
+  private async improveCampaign(
+    campaign: GeneratedCampaign, 
+    validation: ValidationResult, 
+    scrapedPages: ScrapedPage[], 
+    options: CourseGenerationOptions
+  ): Promise<GeneratedCampaign> {
+    const improvementPrompt = this.buildImprovementPrompt(campaign, validation, scrapedPages)
+    const systemPrompt = this.buildSystemPrompt(options)
+
+    try {
+      const response = await this.callOllama(systemPrompt, improvementPrompt)
+      const improvedCampaign = this.parseCampaignResponse(response)
+      return improvedCampaign
+    } catch (error) {
+      console.error('Error improving campaign:', error)
+      return campaign // Return original if improvement fails
+    }
+  }
+
+  private buildImprovementPrompt(campaign: GeneratedCampaign, validation: ValidationResult, scrapedPages: ScrapedPage[]): string {
+    const issues = validation.issues
+      .filter(issue => issue.type === 'error' || issue.severity > 5)
+      .map(issue => `- ${issue.message}: ${issue.suggestion || 'Needs improvement'}`)
+      .join('\n')
+
+    let prompt = `IMPROVE the following campaign based on these validation issues:\n\n`
+    prompt += `ISSUES TO FIX:\n${issues}\n\n`
+    prompt += `CURRENT CAMPAIGN:\n${JSON.stringify(campaign, null, 2)}\n\n`
+    prompt += `SOURCE MATERIAL:\n${scrapedPages.map(page => page.title + ': ' + page.content.substring(0, 500)).join('\n\n')}\n\n`
+    prompt += `IMPROVEMENT REQUIREMENTS:\n`
+    prompt += `- Fix all validation errors\n`
+    prompt += `- Ensure proper level structure and content\n`
+    prompt += `- Maintain the original theme and learning objectives\n`
+    prompt += `- Make content more engaging and comprehensive\n`
+    prompt += `- Respond with ONLY valid JSON, no markdown or explanations\n`
+    
+    return prompt
   }
 
   private buildSystemPrompt(options: CourseGenerationOptions): string {

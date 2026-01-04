@@ -20,8 +20,10 @@ model User {
   updatedAt DateTime @updatedAt
 
   // Relations
-  userProgress UserProgress[]
-  campaigns    Campaign[]
+  userProgress   UserProgress[]
+  campaigns      Campaign[]
+  userBadges     UserBadge[]
+  userMilestones UserMilestone[]
 
   @@map("users")
 }
@@ -34,6 +36,9 @@ model Campaign {
   sourceUrl   String?
   isPublic    Boolean  @default(true)
   createdBy   String
+  qualityScore Int?
+  isValidated Boolean  @default(false)
+  validationData String? // JSON string for validation results
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -79,4 +84,70 @@ model UserProgress {
 
   @@unique([userId, levelId])
   @@map("user_progress")
+}
+
+model Badge {
+  id          String   @id @default(cuid())
+  name        String
+  description String
+  icon        String   // emoji or icon name
+  color       String   // theme color for the badge
+  category    String   // 'achievement', 'milestone', 'skill', 'special'
+  requirement String   // JSON string describing the requirement
+  xpReward    Int      @default(0)
+  isSecret    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  // Relations
+  userBadges  UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id         String   @id @default(cuid())
+  userId     String
+  badgeId    String
+  earnedAt   DateTime @default(now())
+  progress   Float    @default(0) // for progress-based badges (0-1)
+
+  // Relations
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge      Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId])
+  @@map("user_badges")
+}
+
+model Milestone {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  targetValue Int      // the target value to reach
+  category    String   // 'level', 'xp', 'campaigns', 'quests', 'streak'
+  icon        String
+  color       String
+  rewards     String   // JSON string with rewards (xp, badges, etc)
+  createdAt   DateTime @default(now())
+
+  // Relations
+  userMilestones UserMilestone[]
+
+  @@map("milestones")
+}
+
+model UserMilestone {
+  id           String    @id @default(cuid())
+  userId       String
+  milestoneId  String
+  completed    Boolean   @default(false)
+  completedAt  DateTime?
+  currentValue Int       @default(0)
+
+  // Relations
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  milestone    Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, milestoneId])
+  @@map("user_milestones")
 }
