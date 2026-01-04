@@ -51,6 +51,46 @@ export interface UserProgress {
   campaign: Campaign
 }
 
+export interface ScrapingOptions {
+  maxDepth?: number
+  maxPages?: number
+  followExternalLinks?: boolean
+  selectors?: {
+    content?: string
+    title?: string
+    description?: string
+    navigation?: string
+  }
+}
+
+export interface GenerationOptions {
+  ollamaUrl?: string
+  model?: string
+  difficulty?: 'beginner' | 'intermediate' | 'advanced'
+  focusAreas?: string[]
+  includeCodeExamples?: boolean
+  includeQuizzes?: boolean
+  includeProjects?: boolean
+}
+
+export interface ScrapedPage {
+  url: string
+  title: string
+  content: string
+  metadata: {
+    description?: string
+    headings: string[]
+    links: string[]
+    images: string[]
+  }
+}
+
+export interface OllamaStatus {
+  connected: boolean
+  models: string[]
+  defaultModel: string
+}
+
 class ApiClient {
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`
@@ -95,6 +135,8 @@ class ApiClient {
     sourceUrl?: string
     prompt?: string
     createdBy: string
+    scrapingOptions?: ScrapingOptions
+    generationOptions?: GenerationOptions
   }): Promise<Campaign> {
     return this.request<Campaign>('/api/campaigns/generate', {
       method: 'POST',
@@ -111,6 +153,10 @@ class ApiClient {
   // Users
   async getUsers(): Promise<User[]> {
     return this.request<User[]>('/api/users')
+  }
+
+  async getDefaultUser(): Promise<User> {
+    return this.request<User>('/api/users/default')
   }
 
   // Progress
@@ -131,6 +177,27 @@ class ApiClient {
   // Health check
   async healthCheck(): Promise<{ status: string; timestamp: string }> {
     return this.request<{ status: string; timestamp: string }>('/health')
+  }
+
+  // Scraping
+  async scrapeWebsite(url: string, options?: ScrapingOptions): Promise<{
+    success: boolean
+    pages: ScrapedPage[]
+    count: number
+  }> {
+    return this.request<{
+      success: boolean
+      pages: ScrapedPage[]
+      count: number
+    }>('/api/scrape', {
+      method: 'POST',
+      body: JSON.stringify({ url, options }),
+    })
+  }
+
+  // Ollama
+  async getOllamaStatus(): Promise<OllamaStatus> {
+    return this.request<OllamaStatus>('/api/ollama/status')
   }
 }
 

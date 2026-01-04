@@ -30,7 +30,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { api } from './api/client';
-import type { Campaign, Level, UserProgress } from './api/client';
+import type { Campaign, Level, UserProgress, User as UserType } from './api/client';
 
 // --- Utilities ---
 
@@ -214,6 +214,7 @@ export default function DocuQuest() {
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [userProgress, setUserProgress] = useState<UserProgress[]>([]);
+  const [currentUser, setCurrentUser] = useState<UserType | null>(null);
 
   const activeCourse = activeCourseId ? campaigns.find(c => c.id === activeCourseId) : undefined;
   const currentLevelData = activeCourse?.levels.find((l: Level) => l.id === currentLevelId);
@@ -222,9 +223,13 @@ export default function DocuQuest() {
   useEffect(() => {
     const loadData = async () => {
       try {
+        // Get or create default user
+        const user = await api.getDefaultUser();
+        setCurrentUser(user);
+        
         const [campaignsData, progressData] = await Promise.all([
           api.getCampaigns(),
-          api.getUserProgress('default-user') // TODO: Replace with actual user ID
+          api.getUserProgress(user.id)
         ]);
         setCampaigns(campaignsData);
         setUserProgress(progressData);
@@ -268,13 +273,13 @@ export default function DocuQuest() {
     setUserXP(prev => prev + xpEarned);
     
     // Update progress via API
-    if (currentLevelId) {
-      api.updateUserProgress('default-user', {
+    if (currentLevelId && currentUser) {
+      api.updateUserProgress(currentUser.id, {
         levelId: currentLevelId,
         completed: true
       }).then(() => {
         // Refresh progress data
-        api.getUserProgress('default-user').then(setUserProgress);
+        api.getUserProgress(currentUser.id).then(setUserProgress);
       }).catch(console.error);
     }
 
@@ -390,7 +395,7 @@ export default function DocuQuest() {
     
     // Generate campaign via API
     const generateData = {
-      createdBy: 'cmjxeq5cs000010ctxfe9zu36', // Use actual user ID
+      createdBy: currentUser?.id || 'default-user',
       ...(campaignCreationMode === 'url' 
         ? { sourceUrl: newCampaignUrl }
         : { prompt: newCampaignPrompt }
@@ -429,7 +434,7 @@ export default function DocuQuest() {
     
     // Generate campaign via API
     const generateData = {
-      createdBy: 'cmjxeq5cs000010ctxfe9zu36', // Use actual user ID
+      createdBy: currentUser?.id || 'default-user',
       ...(isUrl 
         ? { sourceUrl: homePagePrompt }
         : { prompt: homePagePrompt }

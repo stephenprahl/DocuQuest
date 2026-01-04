@@ -3,6 +3,8 @@ import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { serve } from '@hono/node-server'
 import { prisma } from './lib/prisma'
+import { scrapeWebsite } from './lib/scraper'
+import { OllamaAgent } from './lib/ollama-agent'
 
 const app = new Hono()
 
@@ -17,6 +19,45 @@ app.use('*', cors({
 // Health check
 app.get('/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
+// Ollama status check
+app.get('/api/ollama/status', async (c) => {
+  const agent = new OllamaAgent()
+  const isConnected = await agent.checkOllamaConnection()
+  const models = await agent.getAvailableModels()
+  
+  return c.json({
+    connected: isConnected,
+    models,
+    defaultModel: 'gpt-oss:120b-cloud'
+  })
+})
+
+// Scrape website endpoint
+app.post('/api/scrape', async (c) => {
+  try {
+    const body = await c.req.json()
+    const { url, options } = body
+    
+    if (!url) {
+      return c.json({ error: 'URL is required' }, 400)
+    }
+
+    const scrapedPages = await scrapeWebsite(url, options)
+    
+    return c.json({
+      success: true,
+      pages: scrapedPages,
+      count: scrapedPages.length
+    })
+  } catch (error) {
+    console.error('Error scraping website:', error)
+    return c.json({ 
+      error: 'Failed to scrape website',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, 500)
+  }
 })
 
 // Routes
@@ -132,7 +173,7 @@ app.get('/api/users/:userId/progress', async (c) => {
 app.post('/api/campaigns/generate', async (c) => {
   try {
     const body = await c.req.json()
-    const { sourceUrl, createdBy, prompt } = body
+    const { sourceUrl, createdBy, prompt, scrapingOptions, generationOptions } = body
     
     if (!createdBy) {
       return c.json({ error: 'createdBy is required' }, 400)
@@ -148,10 +189,13 @@ app.post('/api/campaigns/generate', async (c) => {
     }
 
     let generatedCampaign
-    if (prompt) {
-      generatedCampaign = await generateCampaignFromPrompt(prompt, createdBy)
-    } else if (sourceUrl) {
-      generatedCampaign = await generateCampaignFromUrl(sourceUrl, createdBy)
+    
+    if (sourceUrl) {
+      // Use new scraping + Ollama approach
+      generatedCampaign = await generateCampaignFromScraping(sourceUrl, createdBy, scrapingOptions, generationOptions)
+    } else if (prompt) {
+      // For prompt-only generation, still use Ollama but without scraping
+      generatedCampaign = await generateCampaignFromPromptWithOllama(prompt, createdBy, generationOptions)
     } else {
       return c.json({ error: 'Either sourceUrl or prompt is required' }, 400)
     }
@@ -159,9 +203,150 @@ app.post('/api/campaigns/generate', async (c) => {
     return c.json(generatedCampaign, 201)
   } catch (error) {
     console.error('Error generating campaign:', error)
-    return c.json({ error: 'Failed to generate campaign' }, 500)
+    return c.json({ 
+      error: 'Failed to generate campaign',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, 500)
   }
 })
+
+async function generateCampaignFromScraping(
+  sourceUrl: string, 
+  createdBy: string, 
+  scrapingOptions: any = {},
+  generationOptions: any = {}
+) {
+  // Step 1: Scrape the website
+  console.log(`Starting to scrape: ${sourceUrl}`)
+  const scrapedPages = await scrapeWebsite(sourceUrl, {
+    maxDepth: scrapingOptions.maxDepth || 2,
+    maxPages: scrapingOptions.maxPages || 30,
+    ...scrapingOptions
+  })
+
+  if (scrapedPages.length === 0) {
+    throw new Error('No content could be scraped from the provided URL')
+  }
+
+  console.log(`Scraped ${scrapedPages.length} pages`)
+
+  // Step 2: Generate course with Ollama
+  const agent = new OllamaAgent(
+    generationOptions.ollamaUrl,
+    generationOptions.model
+  )
+
+  const isOllamaAvailable = await agent.checkOllamaConnection()
+  if (!isOllamaAvailable) {
+    console.warn('Ollama not available, falling back to template generation')
+    return await generateCampaignFromUrl(sourceUrl, createdBy)
+  }
+
+  console.log('Generating course with Ollama...')
+  const generatedCourse = await agent.generateCourse(scrapedPages, {
+    difficulty: generationOptions.difficulty || 'beginner',
+    focusAreas: generationOptions.focusAreas,
+    includeCodeExamples: generationOptions.includeCodeExamples !== false,
+    includeQuizzes: generationOptions.includeQuizzes !== false,
+    includeProjects: generationOptions.includeProjects !== false
+  })
+
+  // Step 3: Create campaign in database
+  const campaign = await prisma.campaign.create({
+    data: {
+      title: generatedCourse.title,
+      description: generatedCourse.description,
+      theme: generatedCourse.theme,
+      sourceUrl,
+      createdBy,
+      levels: {
+        create: generatedCourse.levels.map(level => ({
+          title: level.title,
+          type: level.type,
+          xp: level.xp,
+          order: level.order,
+          content: JSON.stringify(level.content)
+        }))
+      }
+    },
+    include: {
+      levels: {
+        orderBy: { order: 'asc' }
+      },
+      creator: {
+        select: { id: true, username: true }
+      }
+    }
+  })
+
+  return campaign
+}
+
+async function generateCampaignFromPromptWithOllama(
+  prompt: string, 
+  createdBy: string, 
+  generationOptions: any = {}
+) {
+  const agent = new OllamaAgent(
+    generationOptions.ollamaUrl,
+    generationOptions.model
+  )
+
+  const isOllamaAvailable = await agent.checkOllamaConnection()
+  if (!isOllamaAvailable) {
+    console.warn('Ollama not available, falling back to template generation')
+    return await generateCampaignFromPrompt(prompt, createdBy)
+  }
+
+  // Create a mock scraped page from the prompt
+  const mockPages = [{
+    url: 'prompt://user-input',
+    title: 'Custom Learning Request',
+    content: prompt,
+    metadata: {
+      headings: ['Custom Learning Path'],
+      links: [],
+      images: []
+    }
+  }]
+
+  const generatedCourse = await agent.generateCourse(mockPages, {
+    difficulty: generationOptions.difficulty || 'beginner',
+    focusAreas: generationOptions.focusAreas,
+    includeCodeExamples: generationOptions.includeCodeExamples !== false,
+    includeQuizzes: generationOptions.includeQuizzes !== false,
+    includeProjects: generationOptions.includeProjects !== false
+  })
+
+  const campaign = await prisma.campaign.create({
+    data: {
+      title: generatedCourse.title,
+      description: generatedCourse.description,
+      theme: generatedCourse.theme,
+      sourceUrl: null,
+      createdBy,
+      levels: {
+        create: generatedCourse.levels.map(level => ({
+          title: level.title,
+          type: level.type,
+          xp: level.xp,
+          order: level.order,
+          content: JSON.stringify(level.content)
+        }))
+      }
+    },
+    include: {
+      levels: {
+        orderBy: { order: 'asc' }
+      },
+      creator: {
+        select: { id: true, username: true }
+      }
+    }
+  })
+
+  return campaign
+}
 
 async function generateCampaignFromPrompt(prompt: string, createdBy: string) {
   // Extract key concepts from the prompt
@@ -361,11 +546,130 @@ function generateLevelsForDomain(domain: string) {
   return baseLevels
 }
 
+// Get or create default user
+app.get('/api/users/default', async (c) => {
+  try {
+    let user = await prisma.user.findFirst({
+      orderBy: { createdAt: 'asc' }
+    })
+    
+    if (!user) {
+      // Create default user if none exists
+      user = await prisma.user.create({
+        data: {
+          email: 'dev@docuquest.local',
+          username: 'DevAdventurer'
+        }
+      })
+    }
+    
+    return c.json(user)
+  } catch (error) {
+    console.error('Error getting default user:', error)
+    return c.json({ error: 'Failed to get default user' }, 500)
+  }
+})
+
+// Debug endpoint to check existing data
+app.get('/api/debug/data', async (c) => {
+  try {
+    const campaigns = await prisma.campaign.findMany({
+      include: {
+        levels: {
+          select: {
+            id: true,
+            title: true,
+            type: true,
+            order: true
+          }
+        },
+        creator: {
+          select: { id: true, username: true }
+        }
+      }
+    })
+    
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        username: true
+      }
+    })
+    
+    return c.json({
+      campaigns: campaigns.length,
+      users: users.length,
+      campaignData: campaigns.map(campaign => ({
+        id: campaign.id,
+        title: campaign.title,
+        levels: campaign.levels.length,
+        levelIds: campaign.levels.map(l => l.id)
+      })),
+      userData: users
+    })
+  } catch (error) {
+    console.error('Debug endpoint error:', error)
+    return c.json({ error: 'Debug endpoint failed' }, 500)
+  }
+})
+
+// Validate progress request endpoint
+app.post('/api/debug/validate-progress', async (c) => {
+  try {
+    const body = await c.req.json()
+    const { userId, levelId } = body
+    
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true }
+    })
+    
+    const level = await prisma.level.findUnique({
+      where: { id: levelId },
+      select: { 
+        id: true, 
+        title: true, 
+        campaignId: true,
+        campaign: {
+          select: { id: true, title: true }
+        }
+      }
+    })
+    
+    return c.json({
+      valid: !!(user && level),
+      user: user ? { id: user.id, username: user.username } : null,
+      level: level ? {
+        id: level.id,
+        title: level.title,
+        campaign: level.campaign
+      } : null,
+      error: !user ? 'User not found' : !level ? 'Level not found' : null
+    })
+  } catch (error) {
+    console.error('Validation error:', error)
+    return c.json({ error: 'Validation failed' }, 500)
+  }
+})
+
 app.post('/api/users/:userId/progress', async (c) => {
   try {
     const userId = c.req.param('userId')
     const body = await c.req.json()
     const { levelId, completed } = body
+    
+    if (!levelId) {
+      return c.json({ error: 'levelId is required' }, 400)
+    }
+    
+    // Validate user exists
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    })
+    
+    if (!user) {
+      return c.json({ error: 'User not found' }, 404)
+    }
     
     // Get the campaignId from the level
     const level = await prisma.level.findUnique({
@@ -374,6 +678,7 @@ app.post('/api/users/:userId/progress', async (c) => {
     })
     
     if (!level) {
+      console.error(`Level not found: ${levelId}`)
       return c.json({ error: 'Level not found' }, 404)
     }
     
@@ -406,6 +711,18 @@ app.post('/api/users/:userId/progress', async (c) => {
     return c.json(progress)
   } catch (error) {
     console.error('Error updating progress:', error)
+    
+    // Handle specific Prisma errors
+    if (error instanceof Error && 'code' in error) {
+      const prismaError = error as any
+      if (prismaError.code === 'P2003') {
+        return c.json({ 
+          error: 'Foreign key constraint failed - the level or user may not exist', 
+          details: prismaError.meta 
+        }, 400)
+      }
+    }
+    
     return c.json({ error: 'Failed to update progress' }, 500)
   }
 })
