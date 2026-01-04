@@ -267,7 +267,10 @@ export default function DocuQuest() {
 
     // Small delay to show victory state before moving map
     setTimeout(() => {
-      setBattleState('victory');
+      setBattleState('intro');
+      setFeedback(null);
+      setFailureTitle('Challenge Failed');
+      setView('adventure');
     }, 1000);
   };
 
