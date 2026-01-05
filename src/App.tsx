@@ -33,6 +33,7 @@ import type { Campaign, Level, UserProgress, User as UserType } from './api/clie
 import { EnhancedCampaignCreator } from './components/EnhancedCampaignCreator';
 import { CampaignManagement } from './components/CampaignManagement';
 import { UserProfile } from './components/UserProfile';
+import CampaignProgress from './components/CampaignProgress';
 import { EnhancedCodeEditor } from './components/EnhancedCodeEditor';
 import { BadgesAndMilestones } from './components/BadgesAndMilestones';
 import { AchievementNotifications, useAchievementNotifications } from './components/AchievementNotifications';
@@ -739,6 +740,14 @@ export default function DocuQuest() {
           <History size={20} />
           View Campaign History
         </Button>
+        <Button 
+          variant="outline" 
+          onClick={() => setView('progress')}
+          className="border-indigo-500/50 text-indigo-400 hover:bg-indigo-500/10 hover:border-indigo-400"
+        >
+          <Target size={20} />
+          Campaign Progress
+        </Button>
         <div className="text-slate-500 text-sm">
           {completedLevelIds.length} quests completed • {userXP} XP earned
         </div>
@@ -1199,6 +1208,7 @@ export default function DocuQuest() {
       {view === 'dashboard' && <DashboardView />}
       {view === 'adventure' && <AdventureMapView />}
       {view === 'battle' && <BattleView />}
+      {view === 'progress' && <CampaignProgress />}
     </div>
   );
 }
